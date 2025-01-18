@@ -1,0 +1,8 @@
+# Editor
+/.zed/
+
+# Build
+/build/
+
+# Odin
+/ols.json
