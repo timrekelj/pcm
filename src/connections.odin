@@ -21,6 +21,10 @@ RemoveConnectionErr :: enum {
     CONN_NOT_FOUND
 }
 
+SetConnectionErr :: enum {
+    CONN_NOT_FOUND
+}
+
 reset_all_conns :: proc() {
     for &conn in conns {
         conn.is_curr = false
@@ -40,6 +44,8 @@ add_conn :: proc(name: string, conn: string) -> AddConnectionErr {
 
     append(&conns, Connection{ name, conn, true })
 
+    write_conns()
+
     return nil
 }
 
@@ -49,10 +55,22 @@ remove_conn :: proc(name: string) -> RemoveConnectionErr {
             if c.is_curr {
                 ordered_remove(&conns, i)
                 conns[0].is_curr = true
-                write_curr_conn()
             } else {
                 ordered_remove(&conns, i)
             }
+            write_conns()
+            return nil
+        }
+    }
+
+    return .CONN_NOT_FOUND
+}
+
+set_conn :: proc(name: string) -> SetConnectionErr {
+    for &conn in conns {
+        if strings.compare(conn.name, name) == 0 {
+            reset_all_conns()
+            conn.is_curr = true
             write_conns()
             return nil
         }
@@ -66,18 +84,7 @@ write_conns :: proc() {
 
     for conn in conns {
         fmt.sbprintf(&output_str, "%s=%s\n", conn.name, conn.conn)
-    }
 
-    conn_bytes: []byte = transmute([]u8)strings.to_string(output_str)
-
-    err := os.write_entire_file_or_err(ALL_CONNECTIONS_FILE, conn_bytes)
-    if err != nil {
-        fmt.panicf("Error writing to the file: %s", err)
-    }
-}
-
-write_curr_conn :: proc() {
-    for conn in conns {
         if conn.is_curr {
             conn_str: string = strings.concatenate({"PSQL_CONNECTION=", conn.conn, "\n"})
             conn_bytes: []byte = transmute([]u8)conn_str
@@ -87,6 +94,13 @@ write_curr_conn :: proc() {
                 fmt.panicf("Error writing to the file: %s", err)
             }
         }
+    }
+
+    conn_bytes: []byte = transmute([]u8)strings.to_string(output_str)
+
+    err := os.write_entire_file_or_err(ALL_CONNECTIONS_FILE, conn_bytes)
+    if err != nil {
+        fmt.panicf("Error writing to the file: %s", err)
     }
 }
 

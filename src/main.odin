@@ -25,6 +25,8 @@ main :: proc() {
             remove_postgres_conn(os.args)
         case "list":
             list_all_postgres_conns()
+        case "set":
+            set_postgres_conn(os.args)
         case:
             print_command_help()
     }
@@ -77,8 +79,6 @@ add_new_postgres_conn :: proc() {
     fmt.sbprintf(&conn_sb, "postgres://%s:%s@%s:%s/%s", username, password, host, port, database_name)
 
     add_conn(conn_name, strings.to_string(conn_sb))
-    write_conns()
-    write_curr_conn()
 
     fmt.println("Connection added successfully")
 }
@@ -101,6 +101,18 @@ remove_postgres_conn :: proc(args: []string) {
     }
 
     err := remove_conn(args[2])
+    if err != nil {
+        fmt.panicf("Connection not found")
+    }
+}
+
+set_postgres_conn :: proc(args: []string) {
+    if len(args) != 3 {
+        print_command_help()
+        return
+    }
+
+    err := set_conn(args[2])
     if err != nil {
         fmt.panicf("Connection not found")
     }
