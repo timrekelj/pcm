@@ -11,17 +11,18 @@ CURRENT_CONNECTION_FILE: string
 ALL_CONNECTIONS_FILE: string
 
 main :: proc() {
-    setup()
-
     if len(os.args) == 1 {
         print_command_help()
     }
+
+    setup()
+    read_conns()
 
     switch os.args[1] {
         case "add":
             add_new_postgres_conn()
         case "remove":
-            fmt.println("removing postgres connection")
+            remove_postgres_conn(os.args)
         case "list":
             list_all_postgres_conns()
         case:
@@ -74,50 +75,35 @@ add_new_postgres_conn :: proc() {
 
     conn_sb: strings.Builder
     fmt.sbprintf(&conn_sb, "postgres://%s:%s@%s:%s/%s", username, password, host, port, database_name)
-    conn_str: string = strings.to_string(conn_sb)
 
-    write_new_conn(conn_name, conn_str)
-    set_curr_conn(conn_str)
+    add_conn(conn_name, strings.to_string(conn_sb))
+    write_conns()
+    write_curr_conn()
 
     fmt.println("Connection added successfully")
 }
 
 list_all_postgres_conns :: proc() {
-    if !os.exists(ALL_CONNECTIONS_FILE) || !os.exists(CURRENT_CONNECTION_FILE) {
-        fmt.panicf("Files do not exist")
-    }
-
-    all_conns_file, all_conns_err := os.read_entire_file_or_err(ALL_CONNECTIONS_FILE)
-    if all_conns_err != nil {
-        fmt.panicf("Error reading the file: %s", all_conns_err)
-    }
-
-    curr_conn_file, curr_conn_err := os.read_entire_file_or_err(CURRENT_CONNECTION_FILE)
-    if curr_conn_err != nil {
-        fmt.panicf("Error reading the file: %s", curr_conn_file)
-    }
-
-    curr_conn := strings.split(string(curr_conn_file), "\n")[0]
-    curr_conn = strings.split(curr_conn, "=")[1]
-
     fmt.println("Saved connections:")
-    for line in strings.split(string(all_conns_file), "\n") {
-        if len(line) == 0 {
-            continue
-        }
-
-        conn, split_err := strings.split(line, "=")
-        if split_err != nil {
-            fmt.panicf("Error splitting the line: %s", split_err)
-        }
-
-        if strings.compare(conn[1], curr_conn) == 0 {
-            fmt.println(strings.concatenate({" - ", conn[0], " (", conn[1], ")", " [current]"}))
+    for conn in conns {
+        if conn.is_curr {
+            fmt.println(strings.concatenate({" - ", conn.name, " (", conn.conn, ")", " [current]"}))
         } else {
-            fmt.println(strings.concatenate({" - ", conn[0], " (", conn[1], ")"}))
+            fmt.println(strings.concatenate({" - ", conn.name, " (", conn.conn, ")"}))
         }
     }
+}
 
+remove_postgres_conn :: proc(args: []string) {
+    if len(args) != 3 {
+        print_command_help()
+        return
+    }
+
+    err := remove_conn(args[2])
+    if err != nil {
+        fmt.panicf("Connection not found")
+    }
 }
 
 read_input :: proc() -> string {
@@ -150,36 +136,4 @@ read_password :: proc() -> string {
     }
 
     return strings.clone(string(buff[:n-1]))
-}
-
-write_new_conn :: proc(conn_name: string, conn_str: string) {
-    conn: string = strings.concatenate({conn_name, "=", conn_str, "\n"})
-    conn_bytes: []byte = transmute([]u8)conn
-
-    file, err := os.open(ALL_CONNECTIONS_FILE, os.O_RDWR | os.O_APPEND | os.O_CREATE, 0o644)
-    if err != nil {
-        fmt.panicf("Error writing to the file: %s", err)
-    }
-    defer os.close(file)
-
-    _, err = os.write(file, conn_bytes)
-    if err != nil {
-        fmt.panicf("Error writing to the file: %s", err)
-    }
-}
-
-set_curr_conn :: proc(conn_str: string) {
-    conn: string = strings.concatenate({"PSQL_CONNECTION=", conn_str, "\n"})
-    conn_bytes: []byte = transmute([]u8)conn
-
-    file, err := os.open(CURRENT_CONNECTION_FILE, os.O_RDWR | os.O_CREATE, 0o644)
-    if err != nil {
-        fmt.panicf("Error writing to the file: %s", err)
-    }
-    defer os.close(file)
-
-    _, err = os.write(file, conn_bytes)
-    if err != nil {
-        fmt.panicf("Error writing to the file: %s", err)
-    }
 }
