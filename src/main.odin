@@ -13,6 +13,7 @@ ALL_CONNECTIONS_FILE: string
 main :: proc() {
     if len(os.args) == 1 {
         print_command_help()
+        return
     }
 
     setup()
@@ -85,8 +86,8 @@ add_new_postgres_conn :: proc() {
 
 list_all_postgres_conns :: proc() {
     fmt.println("Saved connections:")
-    for conn in conns {
-        if conn.is_curr {
+    for conn, i in conns {
+        if curr_conn_index == i {
             fmt.println(strings.concatenate({" - ", conn.name, " (", conn.conn, ")", " [current]"}))
         } else {
             fmt.println(strings.concatenate({" - ", conn.name, " (", conn.conn, ")"}))

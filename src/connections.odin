@@ -6,11 +6,11 @@ import "core:os"
 
 Connection :: struct {
     name: string,
-    conn: string,
-    is_curr: bool
+    conn: string
 }
 
 conns: [dynamic]Connection
+curr_conn_index: int
 
 AddConnectionErr :: enum {
     NAME_EXISTS,
@@ -25,12 +25,6 @@ SetConnectionErr :: enum {
     CONN_NOT_FOUND
 }
 
-reset_all_conns :: proc() {
-    for &conn in conns {
-        conn.is_curr = false
-    }
-}
-
 add_conn :: proc(name: string, conn: string) -> AddConnectionErr {
     for c in conns {
         if strings.compare(c.name, name) == 0 {
@@ -40,9 +34,8 @@ add_conn :: proc(name: string, conn: string) -> AddConnectionErr {
         }
     }
 
-    reset_all_conns()
-
-    append(&conns, Connection{ name, conn, true })
+    append(&conns, Connection{ name, conn })
+    curr_conn_index = len(conns) - 1
 
     write_conns()
 
@@ -52,9 +45,9 @@ add_conn :: proc(name: string, conn: string) -> AddConnectionErr {
 remove_conn :: proc(name: string) -> RemoveConnectionErr {
     for c, i in conns {
         if strings.compare(c.name, name) == 0 {
-            if c.is_curr {
+            if i == curr_conn_index {
                 ordered_remove(&conns, i)
-                conns[0].is_curr = true
+                curr_conn_index = 0
             } else {
                 ordered_remove(&conns, i)
             }
@@ -67,10 +60,9 @@ remove_conn :: proc(name: string) -> RemoveConnectionErr {
 }
 
 set_conn :: proc(name: string) -> SetConnectionErr {
-    for &conn in conns {
+    for &conn, i in conns {
         if strings.compare(conn.name, name) == 0 {
-            reset_all_conns()
-            conn.is_curr = true
+            curr_conn_index = i
             write_conns()
             return nil
         }
@@ -82,10 +74,10 @@ set_conn :: proc(name: string) -> SetConnectionErr {
 write_conns :: proc() {
     output_str: strings.Builder
 
-    for conn in conns {
+    for conn, i in conns {
         fmt.sbprintf(&output_str, "%s=%s\n", conn.name, conn.conn)
 
-        if conn.is_curr {
+        if curr_conn_index == i {
             conn_str: string = strings.concatenate({"PSQL_CONNECTION=", conn.conn, "\n"})
             conn_bytes: []byte = transmute([]u8)conn_str
 
@@ -130,10 +122,9 @@ read_conns :: proc() {
             fmt.panicf("Error splitting the line: %s", split_err)
         }
 
+        append(&conns, Connection{ conn[0], conn[1] })
         if strings.compare(conn[1], curr_conn) == 0 {
-            append(&conns, Connection{ conn[0], conn[1], true })
-        } else {
-            append(&conns, Connection{ conn[0], conn[1], false })
+            curr_conn_index = len(conns) - 1
         }
     }
 }
