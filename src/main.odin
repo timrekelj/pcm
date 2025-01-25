@@ -60,6 +60,13 @@ add_new_postgres_conn :: proc() {
     fmt.print("Enter the name of the connection: ")
     conn_name: string = read_input()
 
+    for conn in conns {
+        if conn.name == conn_name {
+            fmt.println("Connection with this name already exists")
+            return;
+        }
+    }
+
     fmt.print("Host: ")
     host: string = read_input()
 
@@ -85,6 +92,10 @@ add_new_postgres_conn :: proc() {
 }
 
 list_all_postgres_conns :: proc() {
+    if len(conns) == 0 {
+        fmt.println("Empty list of connections")
+    }
+
     fmt.println("Saved connections:")
     for conn, i in conns {
         if curr_conn_index == i {
