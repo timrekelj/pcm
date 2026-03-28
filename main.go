@@ -1,45 +1,83 @@
 package main
 
 import (
-	"os"
+	"bufio"
+	"encoding/json"
 	"fmt"
-
-	tea "charm.land/bubbletea/v2"
+	"os"
+	"strconv"
+	"strings"
 )
 
 var ALL_CONNECTIONS_FILE string
 var CURRENT_CONNECTION_FILE string
 
 type connection struct {
-	name   	  string
-	username  string
-	host      string
-	port      int
-	password  string
-	database  string
-	isCurrent bool
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Password string `json:"password"`
+	Database string `json:"database"`
+}
+
+type JsonData struct {
+	Connections []connection `json:"connections"`
 }
 
 func (c connection) toString() string {
-	return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", c.username, c.password, c.host, c.port, c.database)
+	return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", c.Username, c.Password, c.Host, c.Port, c.Database)
 }
 
 func readConnections() ([]connection, error) {
-	all_conns_file, err := os.ReadFile(ALL_CONNECTIONS_FILE)
+	allConnFile, err := os.ReadFile(ALL_CONNECTIONS_FILE)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error opening all connections file: %w", err)
 	}
 
-	curr_conn_file, err := os.ReadFile(CURRENT_CONNECTION_FILE)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(all_conns_file) == 0 || len(curr_conn_file) == 0 {
+	if len(allConnFile) == 0 {
 		return []connection{}, nil
 	}
 
-	return []connection{}, nil
+	var payload JsonData
+	if err := json.Unmarshal(allConnFile, &payload); err != nil {
+		return nil, err
+	}
+
+	return payload.Connections, nil
+}
+
+func currentConnection() string {
+	data, err := os.ReadFile(CURRENT_CONNECTION_FILE)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(data)), "=", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+func writeConnections(conns []connection) error {
+	payload := JsonData{Connections: conns}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ALL_CONNECTIONS_FILE, data, 0644)
+}
+
+func setCurrentConnection(conn connection) error {
+	content := "PSQL_CONNECTION=" + conn.toString()
+
+	return os.WriteFile(CURRENT_CONNECTION_FILE, []byte(content), 0644)
+}
+
+func prompt(scanner *bufio.Scanner, label string) string {
+	fmt.Printf("%s: ", label)
+	scanner.Scan()
+	return strings.TrimSpace(scanner.Text())
 }
 
 func setup() error {
@@ -48,8 +86,8 @@ func setup() error {
 	}
 
 	DIR_PATH := os.Getenv("HOME") + "/.local/state/pcm/"
-	CURRENT_CONNECTION_FILE := DIR_PATH + "current_connection"
-	ALL_CONNECTIONS_FILE := DIR_PATH + "connections"
+	CURRENT_CONNECTION_FILE = DIR_PATH + "current_connection"
+	ALL_CONNECTIONS_FILE = DIR_PATH + "connections.json"
 
 	_, err := os.Stat(DIR_PATH)
 	if err != nil {
@@ -79,81 +117,192 @@ func setup() error {
 	return nil
 }
 
-type model struct {
-    connections []connection
-    cursor   int
-    selected int
-}
+func cmdAdd() error {
+	scanner := bufio.NewScanner(os.Stdin)
 
-func initialModel() model {
-	connections, err := readConnections()
+	name := prompt(scanner, "Name")
+	username := prompt(scanner, "Username")
+	host := prompt(scanner, "Host")
+	portStr := prompt(scanner, "Port")
+	password := prompt(scanner, "Password")
+	database := prompt(scanner, "Database")
+
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		connections = []connection{}
+		return fmt.Errorf("invalid port: %s", portStr)
 	}
 
-	return model{
-		connections: connections,
-		selected: 0,
+	conn := connection{
+		Name:     name,
+		Username: username,
+		Host:     host,
+		Port:     port,
+		Password: password,
+		Database: database,
 	}
+
+	conns, err := readConnections()
+	if err != nil {
+		return err
+	}
+
+	conns = append(conns, conn)
+	if err := writeConnections(conns); err != nil {
+		return err
+	}
+
+	if err := setCurrentConnection(conn); err != nil {
+		return err
+	}
+
+	fmt.Printf("Connection '%s' added and set as current.\n", conn.Name)
+	return nil
 }
 
-func (m model) Init() tea.Cmd {
-    return nil
+func cmdList() error {
+	conns, err := readConnections()
+	if err != nil {
+		return err
+	}
+
+	if len(conns) == 0 {
+		fmt.Println("No connections found.")
+		return nil
+	}
+
+	current := currentConnection()
+	for i, c := range conns {
+		marker := "  "
+		if c.toString() == current {
+			marker = "* "
+		}
+		fmt.Printf("%s%d. %s (%s@%s:%d/%s)\n", marker, i+1, c.Name, c.Username, c.Host, c.Port, c.Database)
+	}
+	return nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    switch msg := msg.(type) {
+func cmdRemove() error {
+	conns, err := readConnections()
+	if err != nil {
+		return err
+	}
 
-    case tea.KeyPressMsg:
-        switch msg.String() {
+	if len(conns) == 0 {
+		fmt.Println("No connections to remove.")
+		return nil
+	}
 
-        case "ctrl+c", "q":
-            return m, tea.Quit
-        case "up", "k":
-            if m.cursor > 0 {
-                m.cursor--
-            }
-        case "down", "j":
-            if m.cursor < len(m.connections)-1 {
-                m.cursor++
-            }
-        case "enter", "space":
-            m.selected = m.cursor
-        }
-    }
+	current := currentConnection()
+	fmt.Println("Select a connection to remove:")
+	for i, c := range conns {
+		marker := "  "
+		if c.toString() == current {
+			marker = "* "
+		}
+		fmt.Printf("%s%d. %s (%s@%s:%d/%s)\n", marker, i+1, c.Name, c.Username, c.Host, c.Port, c.Database)
+	}
 
-    return m, nil
+	scanner := bufio.NewScanner(os.Stdin)
+	choice := prompt(scanner, "Enter number")
+	idx, err := strconv.Atoi(choice)
+	if err != nil || idx < 1 || idx > len(conns) {
+		return fmt.Errorf("invalid selection: %s", choice)
+	}
+
+	removed := conns[idx-1]
+	conns = append(conns[:idx-1], conns[idx:]...)
+
+	if err := writeConnections(conns); err != nil {
+		return err
+	}
+
+	// If removed connection was current, clear or update current
+	if removed.toString() == current {
+		if len(conns) > 0 {
+			if err := setCurrentConnection(conns[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Connection '%s' removed. Current set to '%s'.\n", removed.Name, conns[0].Name)
+		} else {
+			if err := os.WriteFile(CURRENT_CONNECTION_FILE, []byte{}, 0644); err != nil {
+				return err
+			}
+			fmt.Printf("Connection '%s' removed. No connections remaining.\n", removed.Name)
+		}
+	} else {
+		fmt.Printf("Connection '%s' removed.\n", removed.Name)
+	}
+
+	return nil
 }
 
-func (m model) View() tea.View {
-    s := "Which connection do you want to select?"
+func cmdSet() error {
+	conns, err := readConnections()
+	if err != nil {
+		return err
+	}
 
-    // Iterate over our choices
-    for i, connection := range m.connections {
+	if len(conns) == 0 {
+		fmt.Println("No connections to set as current.")
+		return nil
+	}
 
-        cursor := " " // no cursor
-        if m.cursor == i {
-            cursor = ">" // cursor!
-        }
+	current := currentConnection()
+	fmt.Println("Select a connection to set as current:")
+	for i, c := range conns {
+		marker := "  "
+		if c.toString() == current {
+			marker = "* "
+		}
+		fmt.Printf("%s%d. %s (%s@%s:%d/%s)\n", marker, i+1, c.Name, c.Username, c.Host, c.Port, c.Database)
+	}
 
-        checked := " "
-        if m.selected == i {
-            checked = "x" // selected!
-        }
+	scanner := bufio.NewScanner(os.Stdin)
+	choice := prompt(scanner, "Enter number")
+	idx, err := strconv.Atoi(choice)
+	if err != nil || idx < 1 || idx > len(conns) {
+		return fmt.Errorf("invalid selection: %s", choice)
+	}
 
-        s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, connection)
-    }
+	if err := setCurrentConnection(conns[idx-1]); err != nil {
+		return err
+	}
 
-    s += "\nPress q to quit.\n"
-    return tea.NewView(s)
+	fmt.Printf("Current connection set to '%s'.\n", conns[idx-1].Name)
+	return nil
 }
 
 func main() {
-	setup()
+	if err := setup(); err != nil {
+		fmt.Println("Setup error:", err)
+		os.Exit(1)
+	}
 
-    p := tea.NewProgram(initialModel())
-    if _, err := p.Run(); err != nil {
-        fmt.Printf("Alas, there's been an error: %v", err)
-        os.Exit(1)
-    }
+	args := os.Args[1:]
+
+	if len(args) != 1 {
+		fmt.Println("Usage: pcm [list | add | remove | set]")
+		os.Exit(1)
+	}
+
+	var err error
+	switch args[0] {
+	case "list":
+		err = cmdList()
+	case "add":
+		err = cmdAdd()
+	case "remove":
+		err = cmdRemove()
+	case "set":
+		err = cmdSet()
+	default:
+		fmt.Printf("Unknown command: %s\n", args[0])
+		fmt.Println("Usage: pcm [list | add | remove | set]")
+		os.Exit(1)
+	}
+
+	if err != nil {
+		fmt.Println("Error:", err)
+		os.Exit(1)
+	}
 }
